@@ -21,7 +21,7 @@ import java.util.Date;
 public class JwtUtil {
 
     private static final String BEARER_PREFIX = "Bearer ";
-    private static final long TOKEN_TIME = 600 * 600 * 10000L; // 60분
+    private static final long TOKEN_TIME = 6000 * 6000 * 100000L; // 60분
 
     @Value("${jwt.secret.key}")
     private String secretKey;
@@ -53,7 +53,7 @@ public class JwtUtil {
         if (StringUtils.hasText(tokenValue) && tokenValue.startsWith(BEARER_PREFIX)) {
             return tokenValue.substring(7);
         }
-        throw new ServerException("Not Found Token");
+        return null;
     }
 
     public Claims extractClaims(String token) {

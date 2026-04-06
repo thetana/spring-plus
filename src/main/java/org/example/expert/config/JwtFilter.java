@@ -4,91 +4,86 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.UnsupportedJwtException;
-import jakarta.servlet.FilterConfig;
-import jakarta.servlet.*;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.expert.domain.common.dto.AuthUser;
 import org.example.expert.domain.user.enums.UserRole;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Collections;
 
 @Slf4j
+@Component
 @RequiredArgsConstructor
-public class JwtFilter implements Filter {
-
+public class JwtFilter extends OncePerRequestFilter {
+    private final MeterRegistry meterRegistry;
     private final JwtUtil jwtUtil;
 
     @Override
-    public void init(FilterConfig filterConfig) throws ServletException {
-        Filter.super.init(filterConfig);
-    }
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
 
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        HttpServletResponse httpResponse = (HttpServletResponse) response;
+        String bearerToken = request.getHeader("Authorization");
 
-        String url = httpRequest.getRequestURI();
-
-        if (url.startsWith("/auth")) {
-            chain.doFilter(request, response);
-            return;
-        }
-
-        String bearerJwt = httpRequest.getHeader("Authorization");
-
-        if (bearerJwt == null) {
-            // 토큰이 없는 경우 400을 반환합니다.
-            httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "JWT 토큰이 필요합니다.");
-            return;
-        }
-
-        String jwt = jwtUtil.substringToken(bearerJwt);
+        String token = jwtUtil.substringToken(bearerToken);
 
         try {
-            // JWT 유효성 검사와 claims 추출
-            Claims claims = jwtUtil.extractClaims(jwt);
-            if (claims == null) {
-                httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "잘못된 JWT 토큰입니다.");
-                return;
-            }
+            if (StringUtils.hasText(token)) {
 
-            UserRole userRole = UserRole.valueOf(claims.get("userRole", String.class));
-
-            httpRequest.setAttribute("userId", Long.parseLong(claims.getSubject()));
-            httpRequest.setAttribute("email", claims.get("email"));
-            httpRequest.setAttribute("userRole", claims.get("userRole"));
-
-            if (url.startsWith("/admin")) {
-                // 관리자 권한이 없는 경우 403을 반환합니다.
-                if (!UserRole.ADMIN.equals(userRole)) {
-                    httpResponse.sendError(HttpServletResponse.SC_FORBIDDEN, "관리자 권한이 없습니다.");
+                Claims claims = jwtUtil.extractClaims(token);
+                if (claims == null) {
+                    response.sendError(HttpServletResponse.SC_BAD_REQUEST, "사용 할 수 없는 JWT 인듯");
                     return;
                 }
-                chain.doFilter(request, response);
-                return;
+
+                Long memberId = Long.parseLong(claims.getSubject());
+                String email = claims.get("email", String.class);
+                String role = claims.get("userRole", String.class);
+                String nickname = claims.get("nickname", String.class);
+                AuthUser authUser = new AuthUser(memberId, email,  UserRole.valueOf(role), nickname);
+
+                Authentication authentication = new UsernamePasswordAuthenticationToken(
+                        authUser,
+                        null,
+                        Collections.singletonList(new SimpleGrantedAuthority(StringUtils.hasText(role) ? role : "ROLE_USER"))
+                );
+
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+                meterRegistry.counter("security_jwt_success").increment();
+                log.debug("Security Context에 '{}' 인증 정보를 저장했습니다.", memberId);
             }
-
-            chain.doFilter(request, response);
-        } catch (SecurityException | MalformedJwtException e) {
-            log.error("Invalid JWT signature, 유효하지 않는 JWT 서명 입니다.", e);
-            httpResponse.sendError(HttpServletResponse.SC_UNAUTHORIZED, "유효하지 않는 JWT 서명입니다.");
         } catch (ExpiredJwtException e) {
-            log.error("Expired JWT token, 만료된 JWT token 입니다.", e);
-            httpResponse.sendError(HttpServletResponse.SC_UNAUTHORIZED, "만료된 JWT 토큰입니다.");
+            meterRegistry.counter("security_jwt_failure", "type", "expired").increment();
+            log.warn("만료된 JWT 토큰입니다: {}", e.getMessage());
+            request.setAttribute("exception", e);
+        } catch (SecurityException | MalformedJwtException e) {
+            meterRegistry.counter("security_jwt_failure", "type", "invalid").increment();
+            log.warn("잘못된 JWT 서명입니다: {}", e.getMessage());
+            request.setAttribute("exception", e);
         } catch (UnsupportedJwtException e) {
-            log.error("Unsupported JWT token, 지원되지 않는 JWT 토큰 입니다.", e);
-            httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "지원되지 않는 JWT 토큰입니다.");
+            meterRegistry.counter("security_jwt_failure", "type", "unsupported").increment();
+            log.warn("지원되지 않는 JWT 토큰입니다: {}", e.getMessage());
+            request.setAttribute("exception", e);
         } catch (Exception e) {
-            log.error("Internal server error", e);
-            httpResponse.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            meterRegistry.counter("security_jwt_failure", "type", "unknown").increment();
+            log.error("JWT 검증 중 알 수 없는 예외가 발생했습니다: {}", e.getMessage());
+            request.setAttribute("exception", e);
         }
+
+        filterChain.doFilter(request, response);
     }
 
-    @Override
-    public void destroy() {
-        Filter.super.destroy();
-    }
+
 }

@@ -33,7 +33,7 @@ public class AuthService {
 
         String encodedPassword = passwordEncoder.encode(signupRequest.getPassword());
 
-        UserRole userRole = UserRole.of(signupRequest.getUserRole());
+        UserRole userRole = signupRequest.getUserRole();
 
         User newUser = new User(
                 signupRequest.getEmail(),

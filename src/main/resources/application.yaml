@@ -27,3 +27,18 @@ logging:
 jwt:
   secret:
     key: L6h/xMxGO53HQmR/OB99qR/y0kTr2CAyaI5RqBIX184=
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+    tags:
+      application: ${spring.application.name:my-app}
+    enable:
+      tomcat: true
