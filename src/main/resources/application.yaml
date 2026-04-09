@@ -3,7 +3,7 @@ spring:
     name: Plus
 
   datasource:
-    url: jdbc:mysql://localhost:3306/plus #테이블 명 변경 하기
+    url: jdbc:mysql://localhost:3306/plus?allowLoadLocalInfile=true #테이블 명 변경 하기
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: root
     password: 12345678
